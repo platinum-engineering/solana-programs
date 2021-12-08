@@ -29,12 +29,36 @@ pub enum ErrorCode {
     CannotUnlockToEarlierDate,
     TooEarlyToWithdraw,
     InvalidAmount,
+    LinearEmissionDisabled,
 }
 
 
 #[program]
 pub mod simple_locker {
     use super::*;
+
+    pub fn init_config(ctx: Context<InitConfig>, args: CreateConfigArgs) -> Result<()> {
+        let config = ctx.accounts.config.deref_mut();
+
+        *config = Config {
+            admin: ctx.accounts.admin.key(),
+            has_linear_emission: args.has_linear_emission,
+            bump: args.bump,
+        };
+
+        Ok(())
+    }
+
+    pub fn update_config(ctx: Context<UpdateConfig>, args: UpdateConfigArgs) -> Result<()> {
+        let config = &mut ctx.accounts.config;
+        let UpdateConfigArgs {
+            has_linear_emission,
+        } = args;
+
+        config.has_linear_emission = has_linear_emission.unwrap_or(config.has_linear_emission);
+
+        Ok(())
+    }
 
     pub fn create_locker<'info>(
         ctx: Context<'_, '_, '_, 'info, CreateLocker<'info>>,
@@ -47,6 +71,16 @@ pub mod simple_locker {
 
         require!(args.unlock_date < 10000000000, InvalidTimestamp);
 
+        let config = &ctx.accounts.config;
+
+        if !config.has_linear_emission {
+            require!(args.start_emission.is_none(), LinearEmissionDisabled);
+        }
+
+        if let Some(start_emission) = args.start_emission {
+            require!(args.unlock_date > start_emission, InvalidPeriod);
+        }
+
         require!(args.amount > 0, NothingToLock);
 
         let locker = ctx.accounts.locker.deref_mut();
@@ -54,6 +88,7 @@ pub mod simple_locker {
         *locker = Locker {
             owner: ctx.accounts.owner.key(),
             current_unlock_date: args.unlock_date,
+            start_emission: args.start_emission,
             deposited_amount: args.amount,
             vault: ctx.accounts.vault.key(),
             vault_bump: args.vault_bump,
@@ -120,17 +155,42 @@ pub mod simple_locker {
     pub fn withdraw_funds(ctx: Context<WithdrawFunds>, amount: u64) -> Result<()> {
         let now = ctx.accounts.clock.unix_timestamp;
         let locker = &ctx.accounts.locker;
-        let vault = &mut ctx.accounts.vault;             
+        let vault = &mut ctx.accounts.vault;   
+        
+        let amount_to_transfer = match locker.start_emission {
+            Some(start_emission) => {
+                let clamped_time = now.clamp(start_emission, locker.current_unlock_date);
+                let elapsed = clamped_time - start_emission;
+                let full_period = locker.current_unlock_date - start_emission;
+                require!(full_period > 0, InvalidPeriod);
 
-        require!(amount > 0, InvalidAmount);
-        require!(amount <= vault.amount, InvalidAmount);
+                sol_log_64(
+                    amount,
+                    elapsed as u64,
+                    full_period as u64,
+                    now as u64,
+                    start_emission as u64,
+                );
+
+                mul_div(locker.deposited_amount, elapsed, full_period as u64)
+                    .ok_or(ErrorCode::IntegerOverflow)?
+                    .min(amount)
+            }
+            None => {
+                require!(now > locker.current_unlock_date, TooEarlyToWithdraw);
+                amount.min(vault.amount)
+            }
+        };
+
+        require!(amount_to_transfer > 0, InvalidAmount);
+        require!(amount_to_transfer <= vault.amount, InvalidAmount);
 
         let locker_key = locker.key();
         let seeds = &[locker_key.as_ref(), &[locker.vault_bump]];
         let signers = &[&seeds[..]];
 
         TokenTransfer {
-            amount: amount,
+            amount: amount_to_transfer,
             from: vault,
             to: &ctx.accounts.target_wallet,
             authority: &ctx.accounts.vault_authority,
@@ -205,6 +265,7 @@ pub mod simple_locker {
         *new_locker = Locker {
             owner: ctx.accounts.new_owner.key(),
             current_unlock_date: old_locker.current_unlock_date,
+            start_emission: old_locker.start_emission,
             deposited_amount: args.amount,
             vault: ctx.accounts.new_vault.key(),
             vault_bump: args.vault_bump,
@@ -219,9 +280,68 @@ pub mod simple_locker {
 
 
 #[account]
+#[derive(Debug)]
+pub struct Config {
+    admin: Pubkey,
+    has_linear_emission: bool,
+    bump: u8,
+}
+
+impl Config {
+    pub const LEN: usize = 8 + std::mem::size_of::<Self>();
+}
+
+#[derive(AnchorDeserialize, AnchorSerialize)]
+pub struct CreateConfigArgs {
+    pub has_linear_emission: bool,
+    pub bump: u8,
+}
+
+#[derive(Accounts)]
+#[instruction(args: CreateConfigArgs)]
+pub struct InitConfig<'info> {
+    #[account(signer)]
+    admin: AccountInfo<'info>,
+    #[account(
+        init,
+        payer = admin,
+        seeds = [
+            "config".as_ref()
+        ],
+        bump = args.bump,
+        space = Config::LEN
+    )]
+    config: ProgramAccount<'info, Config>,
+
+    system_program: Program<'info, System>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub struct UpdateConfigArgs {
+    has_linear_emission: Option<bool>,
+}
+
+#[derive(Accounts)]
+#[instruction(args: UpdateConfigArgs)]
+pub struct UpdateConfig<'info> {
+    #[account(signer)]
+    admin: AccountInfo<'info>,
+    #[account(
+        mut,
+        seeds = [
+            "config".as_ref()
+        ],
+        bump = config.bump,
+        constraint = config.admin == admin.key()
+    )]
+    config: ProgramAccount<'info, Config>,
+}
+
+#[account]
 pub struct Locker {
     owner: Pubkey,
     current_unlock_date: i64,
+    start_emission: Option<i64>,
     deposited_amount: u64,
     vault: Pubkey,
     vault_bump: u8,
@@ -238,6 +358,7 @@ impl Locker {
 pub struct CreateLockerArgs {
     amount: u64,
     unlock_date: i64,
+    start_emission: Option<i64>,
     locker_bump: u8,
     vault_bump: u8,
 }
@@ -276,7 +397,7 @@ pub struct CreateLocker<'info> {
         constraint = vault.mint == funding_wallet.mint
     )]
     vault: Account<'info, TokenAccount>,
-
+    config: ProgramAccount<'info, Config>,
     clock: Sysvar<'info, Clock>,
     system_program: Program<'info, System>,
     token_program: Program<'info, Token>,
@@ -402,6 +523,24 @@ pub struct SplitLocker<'info> {
     system_program: Program<'info, System>,
 }
 
+
+/// floor(a * b / denominator)
+pub fn mul_div<SrcA, SrcB, SrcD>(a: SrcA, b: SrcB, denominator: SrcD) -> Option<u64>
+where
+    SrcA: fixed::traits::ToFixed,
+    SrcB: fixed::traits::ToFixed,
+    SrcD: fixed::traits::ToFixed,
+{
+    use fixed::types::U64F64;
+
+    let a = U64F64::from_num(a);
+    let b = U64F64::from_num(b);
+    let denominator = U64F64::from_num(denominator);
+
+    a.checked_mul(b)
+        .and_then(|r| r.checked_div(denominator))
+        .and_then(|r| r.floor().checked_as::<u64>())
+}
 
 struct TokenTransfer<'pay, 'info> {
     amount: u64,
