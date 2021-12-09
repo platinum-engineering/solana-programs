@@ -956,6 +956,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "share-token-distributor"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "simple-locker",
+]
+
+[[package]]
 name = "simple-locker"
 version = "0.1.0"
 dependencies = [

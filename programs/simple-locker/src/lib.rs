@@ -209,7 +209,7 @@ pub mod simple_locker {
 
 #[account]
 pub struct Locker {
-    owner: Pubkey,
+    pub owner: Pubkey,
     current_unlock_date: i64,
     deposited_amount: u64,
     vault: Pubkey,
