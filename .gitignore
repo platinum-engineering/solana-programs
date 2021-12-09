@@ -4,3 +4,8 @@
 target
 **/*.rs.bk
 node_modules
+.idea/misc.xml
+.idea/modules.xml
+.idea/solana-simple-locker.iml
+.idea/vcs.xml
+.idea/workspace.xml
