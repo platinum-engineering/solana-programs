@@ -22,6 +22,8 @@ pub enum ErrorCode {
     #[msg("The given unlock date is in the past")]
     UnlockInThePast,
     InvalidTimestamp,
+    #[msg("The given fee wallet is not associated with required fee wallet")]
+    InvalidFeeWallet,
     IntegerOverflow,
     NothingToLock,
     InvalidAmountTransferred,
@@ -29,12 +31,71 @@ pub enum ErrorCode {
     CannotUnlockToEarlierDate,
     TooEarlyToWithdraw,
     InvalidAmount,
+    InitMintInfoNotAuthorized,
 }
 
 
 #[program]
 pub mod simple_locker {
     use super::*;
+
+    pub fn init_config(ctx: Context<InitConfig>, args: CreateConfigArgs) -> Result<()> {
+        let config = ctx.accounts.config.deref_mut();
+
+        *config = Config {
+            admin: ctx.accounts.admin.key(),
+            fee_in_sol: args.fee_in_sol,
+            fee_in_token_numerator: args.fee_in_token_numerator,
+            fee_in_token_denominator: args.fee_in_token_denominator,
+            mint_info_permissioned: args.mint_info_permissioned,
+            fee_wallet: ctx.accounts.fee_wallet.key(),
+            bump: args.bump,
+        };
+
+        Ok(())
+    }
+
+    pub fn update_config(ctx: Context<UpdateConfig>, args: UpdateConfigArgs) -> Result<()> {
+        let config = &mut ctx.accounts.config;
+        let UpdateConfigArgs {
+            fee_in_sol,
+            fee_in_token_numerator,
+            fee_in_token_denominator,
+            mint_info_permissioned,
+        } = args;
+
+        config.fee_in_sol = fee_in_sol.unwrap_or(config.fee_in_sol);
+        config.fee_in_token_numerator =
+            fee_in_token_numerator.unwrap_or(config.fee_in_token_numerator);
+        config.fee_in_token_denominator =
+            fee_in_token_denominator.unwrap_or(config.fee_in_token_denominator);
+        config.mint_info_permissioned =
+            mint_info_permissioned.unwrap_or(config.mint_info_permissioned);
+
+        config.fee_wallet = ctx.accounts.fee_wallet.key();
+
+        Ok(())
+    }
+
+    pub fn init_mint_info(ctx: Context<InitMintInfo>, bump: u8) -> Result<()> {
+        let mint_info = ctx.accounts.mint_info.deref_mut();
+
+        if ctx.accounts.config.mint_info_permissioned {
+            require!(
+                ctx.accounts.payer.key() == ctx.accounts.config.admin,
+                InitMintInfoNotAuthorized
+            );
+        }
+
+        *mint_info = MintInfo {
+            bump,
+            fee_paid: false,
+        };
+
+        sol_log("Initialize mint info");
+
+        Ok(())
+    }
 
     pub fn create_locker<'info>(
         ctx: Context<'_, '_, '_, 'info, CreateLocker<'info>>,
@@ -46,15 +107,46 @@ pub mod simple_locker {
         require!(args.unlock_date > now, UnlockInThePast);
 
         require!(args.unlock_date < 10000000000, InvalidTimestamp);
+        
+        let config = &ctx.accounts.config;
 
-        require!(args.amount > 0, NothingToLock);
+        let mint_info = &mut ctx.accounts.mint_info;
+
+        if should_pay_in_sol(config, mint_info, args.fee_in_sol) {
+            FeeInSol {
+                fee_wallet: &ctx.accounts.fee_wallet,
+                payer: &ctx.accounts.owner,
+                config,
+                mint_info,
+                system_program: &ctx.accounts.system_program,
+            }
+            .pay()?;
+        }
+
+        let lock_fee = if should_pay_in_tokens(config, mint_info, args.fee_in_sol) {
+            FeeInTokens {
+                config,
+                funding_wallet: &mut ctx.accounts.funding_wallet,
+                funding_wallet_authority: &ctx.accounts.funding_wallet_authority,
+                fee_wallet: &ctx.accounts.fee_token_wallet,
+                amount: args.amount,
+                token_program: &ctx.accounts.token_program,
+            }
+            .pay()?
+        } else {
+            0
+        };
+
+        let amount_to_lock = args.amount - lock_fee;
+
+        require!(amount_to_lock > 0, NothingToLock);
 
         let locker = ctx.accounts.locker.deref_mut();
 
         *locker = Locker {
             owner: ctx.accounts.owner.key(),
             current_unlock_date: args.unlock_date,
-            deposited_amount: args.amount,
+            deposited_amount: amount_to_lock,
             vault: ctx.accounts.vault.key(),
             vault_bump: args.vault_bump,
             creator: ctx.accounts.creator.key(),
@@ -63,7 +155,7 @@ pub mod simple_locker {
         };
 
         TokenTransfer {
-            amount: args.amount,
+            amount: amount_to_lock,
             from: &mut ctx.accounts.funding_wallet,
             to: &ctx.accounts.vault,
             authority: &ctx.accounts.funding_wallet_authority,
@@ -98,9 +190,35 @@ pub mod simple_locker {
 
     pub fn increment_lock(ctx: Context<IncrementLock>, amount: u64) -> Result<()> {
         let locker = &mut ctx.accounts.locker;
+        let mint_info = &ctx.accounts.mint_info;
+        let config = &ctx.accounts.config;
+
+        // 3rd argument is false b/c we do not pay in sol here at all
+        let amount_to_lock = if should_pay_in_tokens(config, mint_info, false) {
+            let lock_fee = mul_div(
+                amount,
+                config.fee_in_token_numerator,
+                config.fee_in_token_denominator,
+            )
+            .ok_or(ErrorCode::IntegerOverflow)?;
+
+            FeeInTokens {
+                config,
+                funding_wallet: &mut ctx.accounts.funding_wallet,
+                funding_wallet_authority: &ctx.accounts.funding_wallet_authority,
+                fee_wallet: &ctx.accounts.fee_wallet,
+                amount: lock_fee,
+                token_program: &ctx.accounts.token_program,
+            }
+            .pay()?;
+
+            amount - lock_fee
+        } else {
+            amount
+        };
 
         TokenTransfer {
-            amount: amount,
+            amount: amount_to_lock,
             from: &mut ctx.accounts.funding_wallet,
             to: &ctx.accounts.vault,
             authority: &ctx.accounts.funding_wallet_authority,
@@ -111,7 +229,7 @@ pub mod simple_locker {
 
         locker.deposited_amount = locker
             .deposited_amount
-            .checked_add(amount)
+            .checked_add(amount_to_lock)
             .ok_or(ErrorCode::IntegerOverflow)?;
 
         Ok(())
@@ -217,6 +335,76 @@ pub mod simple_locker {
     }
 }
 
+#[account]
+#[derive(Debug)]
+pub struct Config {
+    admin: Pubkey,
+    fee_in_sol: u64,
+    fee_in_token_numerator: u64,
+    fee_in_token_denominator: u64,
+    mint_info_permissioned: bool,
+    fee_wallet: Pubkey,
+    bump: u8,
+}
+
+impl Config {
+    pub const LEN: usize = 8 + std::mem::size_of::<Self>();
+}
+
+#[derive(AnchorDeserialize, AnchorSerialize)]
+pub struct CreateConfigArgs {
+    pub fee_in_sol: u64,
+    pub fee_in_token_numerator: u64,
+    pub fee_in_token_denominator: u64,
+    pub mint_info_permissioned: bool,
+    pub bump: u8,
+}
+
+#[derive(Accounts)]
+#[instruction(args: CreateConfigArgs)]
+pub struct InitConfig<'info> {
+    #[account(signer)]
+    admin: AccountInfo<'info>,
+    #[account(
+        init,
+        payer = admin,
+        seeds = [
+            "config".as_ref()
+        ],
+        bump = args.bump,
+        space = Config::LEN
+    )]
+    config: ProgramAccount<'info, Config>,
+    fee_wallet: AccountInfo<'info>,
+
+    system_program: Program<'info, System>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub struct UpdateConfigArgs {
+    fee_in_sol: Option<u64>,
+    fee_in_token_numerator: Option<u64>,
+    fee_in_token_denominator: Option<u64>,
+    mint_info_permissioned: Option<bool>,
+}
+
+#[derive(Accounts)]
+#[instruction(args: UpdateConfigArgs)]
+pub struct UpdateConfig<'info> {
+    #[account(signer)]
+    admin: AccountInfo<'info>,
+    #[account(
+        mut,
+        seeds = [
+            "config".as_ref()
+        ],
+        bump = config.bump,
+        constraint = config.admin == admin.key()
+    )]
+    config: ProgramAccount<'info, Config>,
+
+    fee_wallet: AccountInfo<'info>,
+}
 
 #[account]
 pub struct Locker {
@@ -234,12 +422,48 @@ impl Locker {
     pub const LEN: usize = std::mem::size_of::<Self>() + 8;
 }
 
+#[account]
+pub struct MintInfo {
+    bump: u8,
+    fee_paid: bool,
+}
+
+impl Default for MintInfo {
+    fn default() -> Self {
+        Self {
+            bump: Default::default(),
+            fee_paid: Default::default(),
+        }
+    }
+}
+
+#[derive(Accounts)]
+#[instruction(bump: u8)]
+pub struct InitMintInfo<'info> {
+    #[account(signer)]
+    payer: AccountInfo<'info>,
+    #[account(
+        init,
+        payer = payer,
+        seeds = [
+            mint.key().as_ref(),
+        ],
+        bump = bump
+    )]
+    mint_info: ProgramAccount<'info, MintInfo>,
+    mint: Account<'info, Mint>,
+    config: ProgramAccount<'info, Config>,
+
+    system_program: Program<'info, System>,
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct CreateLockerArgs {
     amount: u64,
     unlock_date: i64,
     locker_bump: u8,
     vault_bump: u8,
+    fee_in_sol: bool,
 }
 
 #[derive(Accounts)]
@@ -276,6 +500,19 @@ pub struct CreateLocker<'info> {
         constraint = vault.mint == funding_wallet.mint
     )]
     vault: Account<'info, TokenAccount>,
+    #[account(mut)]
+    fee_wallet: AccountInfo<'info>,
+    #[account(mut)]
+    fee_token_wallet: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        seeds = [
+            vault.mint.key().as_ref()
+        ],
+        bump = mint_info.bump
+    )]
+    mint_info: ProgramAccount<'info, MintInfo>,
+    config: ProgramAccount<'info, Config>,
 
     clock: Sysvar<'info, Clock>,
     system_program: Program<'info, System>,
@@ -319,6 +556,16 @@ pub struct IncrementLock<'info> {
     funding_wallet_authority: AccountInfo<'info>,
     #[account(mut)]
     funding_wallet: Account<'info, TokenAccount>,
+    #[account(
+        seeds = [
+            vault.mint.key().as_ref()
+        ],
+        bump = mint_info.bump
+    )]
+    mint_info: ProgramAccount<'info, MintInfo>,
+    #[account(mut)]
+    fee_wallet: Account<'info, TokenAccount>,
+    config: ProgramAccount<'info, Config>,
 
     token_program: Program<'info, Token>,
 }
@@ -402,6 +649,135 @@ pub struct SplitLocker<'info> {
     system_program: Program<'info, System>,
 }
 
+/// floor(a * b / denominator)
+pub fn mul_div<SrcA, SrcB, SrcD>(a: SrcA, b: SrcB, denominator: SrcD) -> Option<u64>
+where
+    SrcA: fixed::traits::ToFixed,
+    SrcB: fixed::traits::ToFixed,
+    SrcD: fixed::traits::ToFixed,
+{
+    use fixed::types::U64F64;
+
+    let a = U64F64::from_num(a);
+    let b = U64F64::from_num(b);
+    let denominator = U64F64::from_num(denominator);
+
+    a.checked_mul(b)
+        .and_then(|r| r.checked_div(denominator))
+        .and_then(|r| r.floor().checked_as::<u64>())
+}
+
+fn should_pay_in_sol(config: &Config, mint_info: &MintInfo, fee_in_sol: bool) -> bool {
+    match (
+        config.mint_info_permissioned,
+        fee_in_sol,
+        mint_info.fee_paid,
+    ) {
+        // always paying
+        (true, _, _) => true,
+        // pay if pay in sol is chosen but no fee paid yet
+        (_, true, false) => true,
+        // do not pay in other cases
+        (_, _, _) => false,
+    }
+}
+
+fn should_pay_in_tokens(config: &Config, mint_info: &MintInfo, fee_in_sol: bool) -> bool {
+    match (
+        config.mint_info_permissioned,
+        fee_in_sol,
+        mint_info.fee_paid,
+    ) {
+        // always paying
+        (true, _, _) => true,
+        // pay if pay in sol is not chosen but no fee paid yet
+        (_, false, false) => true,
+        // do not pay in other cases
+        (_, _, _) => false,
+    }
+}
+
+struct FeeInSol<'pay, 'info> {
+    fee_wallet: &'pay AccountInfo<'info>,
+    payer: &'pay AccountInfo<'info>,
+    config: &'pay Config,
+    mint_info: &'pay mut MintInfo,
+    system_program: &'pay Program<'info, System>,
+}
+
+impl FeeInSol<'_, '_> {
+    fn pay(self) -> Result<()> {
+        require!(
+            self.fee_wallet.key() == self.config.fee_wallet,
+            InvalidFeeWallet
+        );
+
+        self.payer.key().log();
+        self.fee_wallet.key().log();
+
+        solana_program::program::invoke(
+            &solana_program::system_instruction::transfer(
+                self.payer.to_account_info().key,
+                self.fee_wallet.key,
+                self.config.fee_in_sol * solana_program::native_token::LAMPORTS_PER_SOL,
+            ),
+            &[
+                self.payer.to_account_info(),
+                self.fee_wallet.to_account_info(),
+                self.system_program.to_account_info(),
+            ],
+        )?;
+
+        // if not permissioned we allow one-time fees
+        if !self.config.mint_info_permissioned {
+            self.mint_info.fee_paid = true;
+        }
+
+        Ok(())
+    }
+}
+
+struct FeeInTokens<'pay, 'info> {
+    config: &'pay Config,
+    funding_wallet: &'pay mut Account<'info, TokenAccount>,
+    funding_wallet_authority: &'pay AccountInfo<'info>,
+    fee_wallet: &'pay Account<'info, TokenAccount>,
+    amount: u64,
+    token_program: &'pay Program<'info, Token>,
+}
+
+impl FeeInTokens<'_, '_> {
+    fn pay(self) -> Result<u64> {
+        let associated_token_account =
+            get_associated_token_address(&self.config.fee_wallet, &self.funding_wallet.mint);
+
+        require!(
+            associated_token_account == self.fee_wallet.key(),
+            InvalidFeeWallet
+        );
+
+        let lock_fee = mul_div(
+            self.amount,
+            self.config.fee_in_token_numerator,
+            self.config.fee_in_token_denominator,
+        )
+        .ok_or(ErrorCode::IntegerOverflow)?;
+
+        TokenTransfer {
+            amount: lock_fee,
+            from: self.funding_wallet,
+            to: self.fee_wallet,
+            authority: self.funding_wallet_authority,
+            token_program: self.token_program,
+            signers: None,
+        }
+        .make()?;
+
+        sol_log_64(self.amount, lock_fee, self.amount - lock_fee, 0, 0);
+
+        Ok(lock_fee)
+    }
+}
 
 struct TokenTransfer<'pay, 'info> {
     amount: u64,
