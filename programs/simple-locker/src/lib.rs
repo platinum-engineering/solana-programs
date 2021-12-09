@@ -2,18 +2,10 @@ use std::ops::DerefMut;
 
 use anchor_lang::{
     prelude::*,
-    solana_program::{
-        self,
-        log::{sol_log, sol_log_64},
-    },
+    solana_program::log::{sol_log, sol_log_64},
     AccountsClose,
 };
-use anchor_spl::{
-    associated_token::get_associated_token_address,
-    token::{self, CloseAccount, Mint, Token, TokenAccount, Transfer},
-};
-
-use az::CheckedAs;
+use anchor_spl::token::{self, CloseAccount, Token, TokenAccount, Transfer};
 
 declare_id!("He1q6sv6cKGp5Pcns1VDzZ2pruCtWkNwkqjCx9gTfXSM");
 
@@ -30,7 +22,6 @@ pub enum ErrorCode {
     TooEarlyToWithdraw,
     InvalidAmount,
 }
-
 
 #[program]
 pub mod simple_locker {
@@ -118,9 +109,8 @@ pub mod simple_locker {
     }
 
     pub fn withdraw_funds(ctx: Context<WithdrawFunds>, amount: u64) -> Result<()> {
-        let now = ctx.accounts.clock.unix_timestamp;
         let locker = &ctx.accounts.locker;
-        let vault = &mut ctx.accounts.vault;             
+        let vault = &mut ctx.accounts.vault;
 
         require!(amount > 0, InvalidAmount);
         require!(amount <= vault.amount, InvalidAmount);
@@ -216,7 +206,6 @@ pub mod simple_locker {
         Ok(())
     }
 }
-
 
 #[account]
 pub struct Locker {
@@ -344,7 +333,6 @@ pub struct WithdrawFunds<'info> {
     )]
     target_wallet: Account<'info, TokenAccount>,
 
-    clock: Sysvar<'info, Clock>,
     token_program: Program<'info, Token>,
 }
 
@@ -401,7 +389,6 @@ pub struct SplitLocker<'info> {
     token_program: Program<'info, Token>,
     system_program: Program<'info, System>,
 }
-
 
 struct TokenTransfer<'pay, 'info> {
     amount: u64,
