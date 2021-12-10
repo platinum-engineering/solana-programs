@@ -61,10 +61,28 @@ pub mod share_token_distributor {
         Ok(())
     }
 
-    pub fn exchange(ctx: Context<Exchange>) -> Result<()> {
-        // TODO: withdraw tokens from locker
+    pub fn exchange(ctx: Context<Exchange>, amount: u64) -> Result<()> {
+        let target_wallet = &mut ctx.accounts.target_wallet;
 
-        let share_amount = todo!("burn withdrawn amount");
+        let amount_before = target_wallet.amount;
+        let cpi_ctx = CpiContext::new(
+            ctx.accounts.locker_program.to_account_info(),
+            simple_locker::cpi::accounts::WithdrawFunds {
+                locker: ctx.accounts.locker.to_account_info(),
+                owner: ctx.accounts.locker_authority.to_account_info(),
+                vault_authority: ctx.accounts.vault_authority.to_account_info(),
+                vault: ctx.accounts.vault.to_account_info(),
+                target_wallet: target_wallet.to_account_info(),
+                token_program: ctx.accounts.token_program.to_account_info(),
+            },
+        );
+        simple_locker::cpi::withdraw_funds(cpi_ctx, amount)?;
+
+        target_wallet.reload()?;
+        let amount_after = target_wallet.amount;
+        // Actual withdrawn amount can be less than requested amount
+        // if the locker is configured with linear emission.
+        let share_amount = amount_after - amount_before;
 
         let cpi_ctx = CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
@@ -209,6 +227,13 @@ pub struct Exchange<'info> {
         constraint = distributor.locker == locker.key()
     )]
     locker: Account<'info, simple_locker::Locker>,
+    #[account(
+        seeds = [
+            locker.key().as_ref(),
+        ],
+        bump = distributor.locker_authority_bump
+    )]
+    locker_authority: AccountInfo<'info>,
 
     vault_authority: AccountInfo<'info>,
     #[account(
@@ -223,4 +248,5 @@ pub struct Exchange<'info> {
     target_wallet: Account<'info, TokenAccount>,
 
     token_program: Program<'info, Token>,
+    locker_program: Program<'info, simple_locker::program::SimpleLocker>,
 }

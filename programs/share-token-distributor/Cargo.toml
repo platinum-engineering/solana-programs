@@ -1,21 +1,21 @@
 [package]
-name = "share-token-distributor"
-version = "0.1.0"
 description = "Created with Anchor"
 edition = "2018"
+name = "share-token-distributor"
+version = "0.1.0"
 
 [lib]
 crate-type = ["cdylib", "lib"]
 name = "share_token_distributor"
 
 [features]
-no-entrypoint = []
-no-idl = []
 cpi = ["no-entrypoint"]
 default = []
+no-entrypoint = []
+no-idl = []
 
 [dependencies]
 anchor-lang = "0.18"
 anchor-spl = "0.18"
 
-simple-locker = {path = "../simple-locker", features = ["no-entrypoint"]}
+simple-locker = {path = "../simple-locker", features = ["cpi"]}
