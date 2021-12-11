@@ -245,7 +245,7 @@ pub struct CreateLocker<'info> {
         bump = args.locker_bump,
         space = Locker::LEN,
     )]
-    locker: ProgramAccount<'info, Locker>,
+    locker: Account<'info, Locker>,
     #[account(signer)]
     creator: AccountInfo<'info>,
     owner: AccountInfo<'info>,
@@ -274,7 +274,7 @@ pub struct CreateLocker<'info> {
 #[derive(Accounts)]
 pub struct Relock<'info> {
     #[account(mut)]
-    locker: ProgramAccount<'info, Locker>,
+    locker: Account<'info, Locker>,
     #[account(
         signer,
         constraint = locker.owner == owner.key()
@@ -285,7 +285,7 @@ pub struct Relock<'info> {
 #[derive(Accounts)]
 pub struct TransferOwnership<'info> {
     #[account(mut)]
-    locker: ProgramAccount<'info, Locker>,
+    locker: Account<'info, Locker>,
     #[account(
         signer,
         constraint = locker.owner == owner.key()
@@ -297,7 +297,7 @@ pub struct TransferOwnership<'info> {
 #[derive(Accounts)]
 pub struct IncrementLock<'info> {
     #[account(mut)]
-    locker: ProgramAccount<'info, Locker>,
+    locker: Account<'info, Locker>,
     #[account(
         mut,
         constraint = vault.mint == funding_wallet.mint,
@@ -315,7 +315,7 @@ pub struct IncrementLock<'info> {
 #[derive(Accounts)]
 pub struct WithdrawFunds<'info> {
     #[account(mut)]
-    locker: ProgramAccount<'info, Locker>,
+    locker: Account<'info, Locker>,
     #[account(
         signer,
         constraint = locker.owner == owner.key()
@@ -347,7 +347,7 @@ pub struct SplitLockerArgs {
 #[instruction(args: SplitLockerArgs)]
 pub struct SplitLocker<'info> {
     #[account(mut)]
-    old_locker: ProgramAccount<'info, Locker>,
+    old_locker: Account<'info, Locker>,
     #[account(
         signer,
         constraint = old_locker.owner == old_owner.key()
@@ -371,7 +371,7 @@ pub struct SplitLocker<'info> {
         bump = args.locker_bump,
         space = Locker::LEN,
     )]
-    new_locker: ProgramAccount<'info, Locker>,
+    new_locker: Account<'info, Locker>,
     new_owner: AccountInfo<'info>,
     #[account(
         seeds = [

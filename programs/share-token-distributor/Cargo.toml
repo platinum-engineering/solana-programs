@@ -15,7 +15,7 @@ no-entrypoint = []
 no-idl = []
 
 [dependencies]
-anchor-lang = "0.18"
-anchor-spl = "0.18"
+anchor-lang = "0.19"
+anchor-spl = "0.19"
 
 simple-locker = {path = "../simple-locker", features = ["cpi"]}

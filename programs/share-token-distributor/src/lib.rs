@@ -129,7 +129,7 @@ pub struct Initialize<'info> {
         payer = owner,
         space = Distributor::LEN
     )]
-    distributor: ProgramAccount<'info, Distributor>,
+    distributor: Account<'info, Distributor>,
     #[account(
         init,
         payer = owner,
@@ -170,7 +170,7 @@ pub struct Initialize<'info> {
 pub struct AddShare<'info> {
     #[account(signer)]
     owner: AccountInfo<'info>,
-    distributor: ProgramAccount<'info, Distributor>,
+    distributor: Account<'info, Distributor>,
 
     #[account(
         mut,
@@ -198,7 +198,7 @@ pub struct AddShare<'info> {
 pub struct Exchange<'info> {
     #[account(signer)]
     shareholder: AccountInfo<'info>,
-    distributor: ProgramAccount<'info, Distributor>,
+    distributor: Account<'info, Distributor>,
 
     #[account(
         mut,
