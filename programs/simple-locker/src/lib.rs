@@ -50,7 +50,6 @@ pub mod simple_locker {
             vault_bump: args.vault_bump,
             creator: ctx.accounts.creator.key(),
             original_unlock_date: args.unlock_date,
-            locker_bump: args.locker_bump,
         };
 
         TokenTransfer {
@@ -200,7 +199,6 @@ pub mod simple_locker {
             vault_bump: args.vault_bump,
             creator: ctx.accounts.old_owner.key(),
             original_unlock_date: old_locker.current_unlock_date,
-            locker_bump: args.locker_bump,
         };
 
         Ok(())
@@ -216,7 +214,6 @@ pub struct Locker {
     vault_bump: u8,
     creator: Pubkey,
     original_unlock_date: i64,
-    locker_bump: u8,
 }
 
 impl Locker {
@@ -227,7 +224,6 @@ impl Locker {
 pub struct CreateLockerArgs {
     amount: u64,
     unlock_date: i64,
-    locker_bump: u8,
     vault_bump: u8,
 }
 
@@ -237,15 +233,9 @@ pub struct CreateLocker<'info> {
     #[account(
         init,
         payer = creator,
-        seeds = [
-            creator.key().as_ref(),
-            args.unlock_date.to_be_bytes().as_ref(),
-            args.amount.to_be_bytes().as_ref(),
-        ],
-        bump = args.locker_bump,
         space = Locker::LEN,
     )]
-    locker: Account<'info, Locker>,
+    locker: ProgramAccount<'info, Locker>,
     #[account(signer)]
     creator: AccountInfo<'info>,
     owner: AccountInfo<'info>,
@@ -338,7 +328,6 @@ pub struct WithdrawFunds<'info> {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct SplitLockerArgs {
-    locker_bump: u8,
     vault_bump: u8,
     amount: u64,
 }
@@ -363,12 +352,6 @@ pub struct SplitLocker<'info> {
     #[account(
         init,
         payer = old_owner,
-        seeds = [
-            old_locker.key().as_ref(),
-            old_locker.current_unlock_date.to_be_bytes().as_ref(),
-            args.amount.to_be_bytes().as_ref()
-        ],
-        bump = args.locker_bump,
         space = Locker::LEN,
     )]
     new_locker: Account<'info, Locker>,

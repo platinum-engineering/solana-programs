@@ -62,10 +62,27 @@ pub mod share_token_distributor {
     }
 
     pub fn exchange(ctx: Context<Exchange>, amount: u64) -> Result<()> {
-        let target_wallet = &mut ctx.accounts.target_wallet;
+        let mut target_wallet: Account<TokenAccount> =
+            Account::try_from(&ctx.accounts.target_wallet)?;
+        require!(target_wallet.mint == ctx.accounts.vault.mint, InvalidMint);
+
+        ctx.accounts.locker.key().log();
+        ctx.accounts.locker_authority.key().log();
+        ctx.accounts.vault_authority.key().log();
+        ctx.accounts.vault.key().log();
+
+        let distributor = &ctx.accounts.distributor;
+
+        let distributor_key = distributor.key();
+        let seeds = &[
+            distributor_key.as_ref(),
+            "locker".as_ref(),
+            &[distributor.locker_authority_bump],
+        ];
+        let signer = &[&seeds[..]];
 
         let amount_before = target_wallet.amount;
-        let cpi_ctx = CpiContext::new(
+        let cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.locker_program.to_account_info(),
             simple_locker::cpi::accounts::WithdrawFunds {
                 locker: ctx.accounts.locker.to_account_info(),
@@ -75,6 +92,7 @@ pub mod share_token_distributor {
                 target_wallet: target_wallet.to_account_info(),
                 token_program: ctx.accounts.token_program.to_account_info(),
             },
+            signer,
         );
         simple_locker::cpi::withdraw_funds(cpi_ctx, amount)?;
 
@@ -129,13 +147,14 @@ pub struct Initialize<'info> {
         payer = owner,
         space = Distributor::LEN
     )]
-    distributor: Account<'info, Distributor>,
+    distributor: ProgramAccount<'info, Distributor>,
     #[account(
         init,
         payer = owner,
         space = Mint::LEN,
         seeds = [
-            distributor.key().as_ref()
+            distributor.key().as_ref(),
+            "mint".as_ref()
         ],
         bump = args.mint_bump,
         owner = Token::id(),
@@ -155,7 +174,8 @@ pub struct Initialize<'info> {
     locker: Account<'info, simple_locker::Locker>,
     #[account(
         seeds = [
-            locker.key().as_ref(),
+            distributor.key().as_ref(),
+            "locker".as_ref()
         ],
         bump = args.locker_authority_bump
     )]
@@ -229,7 +249,8 @@ pub struct Exchange<'info> {
     locker: Account<'info, simple_locker::Locker>,
     #[account(
         seeds = [
-            locker.key().as_ref(),
+            distributor.key().as_ref(),
+            "locker".as_ref(),
         ],
         bump = distributor.locker_authority_bump
     )]
@@ -241,11 +262,11 @@ pub struct Exchange<'info> {
         constraint = vault.owner == vault_authority.key()
     )]
     vault: Account<'info, TokenAccount>,
-    #[account(
-        mut,
-        constraint = target_wallet.mint == vault.mint
-    )]
-    target_wallet: Account<'info, TokenAccount>,
+    #[account(mut)]
+    // Strange, but it causes access violation exception
+    // so we need to check the account manually.
+    // target_wallet: Account<'info, TokenAccount>,
+    target_wallet: AccountInfo<'info>,
 
     token_program: Program<'info, Token>,
     locker_program: Program<'info, simple_locker::program::SimpleLocker>,
