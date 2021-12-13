@@ -2,18 +2,10 @@ use std::ops::DerefMut;
 
 use anchor_lang::{
     prelude::*,
-    solana_program::{
-        self,
-        log::{sol_log, sol_log_64},
-    },
+    solana_program::log::{sol_log, sol_log_64},
     AccountsClose,
 };
-use anchor_spl::{
-    associated_token::get_associated_token_address,
-    token::{self, CloseAccount, Mint, Token, TokenAccount, Transfer},
-};
-
-use az::CheckedAs;
+use anchor_spl::token::{self, CloseAccount, Token, TokenAccount, Transfer};
 
 declare_id!("He1q6sv6cKGp5Pcns1VDzZ2pruCtWkNwkqjCx9gTfXSM");
 
@@ -30,7 +22,6 @@ pub enum ErrorCode {
     TooEarlyToWithdraw,
     InvalidAmount,
 }
-
 
 #[program]
 pub mod simple_locker {
@@ -59,7 +50,6 @@ pub mod simple_locker {
             vault_bump: args.vault_bump,
             creator: ctx.accounts.creator.key(),
             original_unlock_date: args.unlock_date,
-            locker_bump: args.locker_bump,
         };
 
         TokenTransfer {
@@ -118,9 +108,8 @@ pub mod simple_locker {
     }
 
     pub fn withdraw_funds(ctx: Context<WithdrawFunds>, amount: u64) -> Result<()> {
-        let now = ctx.accounts.clock.unix_timestamp;
         let locker = &ctx.accounts.locker;
-        let vault = &mut ctx.accounts.vault;             
+        let vault = &mut ctx.accounts.vault;
 
         require!(amount > 0, InvalidAmount);
         require!(amount <= vault.amount, InvalidAmount);
@@ -210,24 +199,21 @@ pub mod simple_locker {
             vault_bump: args.vault_bump,
             creator: ctx.accounts.old_owner.key(),
             original_unlock_date: old_locker.current_unlock_date,
-            locker_bump: args.locker_bump,
         };
 
         Ok(())
     }
 }
 
-
 #[account]
 pub struct Locker {
-    owner: Pubkey,
+    pub owner: Pubkey,
     current_unlock_date: i64,
     deposited_amount: u64,
     vault: Pubkey,
     vault_bump: u8,
     creator: Pubkey,
     original_unlock_date: i64,
-    locker_bump: u8,
 }
 
 impl Locker {
@@ -238,7 +224,6 @@ impl Locker {
 pub struct CreateLockerArgs {
     amount: u64,
     unlock_date: i64,
-    locker_bump: u8,
     vault_bump: u8,
 }
 
@@ -248,12 +233,6 @@ pub struct CreateLocker<'info> {
     #[account(
         init,
         payer = creator,
-        seeds = [
-            creator.key().as_ref(),
-            args.unlock_date.to_be_bytes().as_ref(),
-            args.amount.to_be_bytes().as_ref(),
-        ],
-        bump = args.locker_bump,
         space = Locker::LEN,
     )]
     locker: ProgramAccount<'info, Locker>,
@@ -285,7 +264,7 @@ pub struct CreateLocker<'info> {
 #[derive(Accounts)]
 pub struct Relock<'info> {
     #[account(mut)]
-    locker: ProgramAccount<'info, Locker>,
+    locker: Account<'info, Locker>,
     #[account(
         signer,
         constraint = locker.owner == owner.key()
@@ -296,7 +275,7 @@ pub struct Relock<'info> {
 #[derive(Accounts)]
 pub struct TransferOwnership<'info> {
     #[account(mut)]
-    locker: ProgramAccount<'info, Locker>,
+    locker: Account<'info, Locker>,
     #[account(
         signer,
         constraint = locker.owner == owner.key()
@@ -308,7 +287,7 @@ pub struct TransferOwnership<'info> {
 #[derive(Accounts)]
 pub struct IncrementLock<'info> {
     #[account(mut)]
-    locker: ProgramAccount<'info, Locker>,
+    locker: Account<'info, Locker>,
     #[account(
         mut,
         constraint = vault.mint == funding_wallet.mint,
@@ -326,7 +305,7 @@ pub struct IncrementLock<'info> {
 #[derive(Accounts)]
 pub struct WithdrawFunds<'info> {
     #[account(mut)]
-    locker: ProgramAccount<'info, Locker>,
+    locker: Account<'info, Locker>,
     #[account(
         signer,
         constraint = locker.owner == owner.key()
@@ -344,13 +323,11 @@ pub struct WithdrawFunds<'info> {
     )]
     target_wallet: Account<'info, TokenAccount>,
 
-    clock: Sysvar<'info, Clock>,
     token_program: Program<'info, Token>,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct SplitLockerArgs {
-    locker_bump: u8,
     vault_bump: u8,
     amount: u64,
 }
@@ -359,7 +336,7 @@ pub struct SplitLockerArgs {
 #[instruction(args: SplitLockerArgs)]
 pub struct SplitLocker<'info> {
     #[account(mut)]
-    old_locker: ProgramAccount<'info, Locker>,
+    old_locker: Account<'info, Locker>,
     #[account(
         signer,
         constraint = old_locker.owner == old_owner.key()
@@ -375,15 +352,9 @@ pub struct SplitLocker<'info> {
     #[account(
         init,
         payer = old_owner,
-        seeds = [
-            old_locker.key().as_ref(),
-            old_locker.current_unlock_date.to_be_bytes().as_ref(),
-            args.amount.to_be_bytes().as_ref()
-        ],
-        bump = args.locker_bump,
         space = Locker::LEN,
     )]
-    new_locker: ProgramAccount<'info, Locker>,
+    new_locker: Account<'info, Locker>,
     new_owner: AccountInfo<'info>,
     #[account(
         seeds = [
@@ -401,7 +372,6 @@ pub struct SplitLocker<'info> {
     token_program: Program<'info, Token>,
     system_program: Program<'info, System>,
 }
-
 
 struct TokenTransfer<'pay, 'info> {
     amount: u64,
