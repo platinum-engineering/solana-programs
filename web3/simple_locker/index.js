@@ -125,9 +125,9 @@ class Client {
 
     await this.program.rpc.createLocker(
       {
+        amount: args.amount,
         unlockDate: args.unlockDate,
         vaultBump,
-        amount: args.amount,
       },
       {
         accounts: {
@@ -207,10 +207,8 @@ class Client {
           vault: args.locker.account.vault,
           fundingWallet: args.fundingWallet,
           fundingWalletAuthority: args.fundingWalletAuthority,
-          feeWallet: feeTokenWallet,
+          
           tokenProgram: utils.TOKEN_PROGRAM_ID,
-          mintInfo,
-          config
         },
       }
     );

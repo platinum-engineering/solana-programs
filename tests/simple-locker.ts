@@ -4,7 +4,7 @@ import * as serumCmn from "@project-serum/common";
 import * as assert from 'assert';
 
 import { SimpleLocker } from '../target/types/simple_locker';
-import { Client } from "../web3/simple_locker/simple_locker";
+import { Client } from "../web3/simple_locker/index";
 
 async function createMint(provider: anchor.Provider, authority?: anchor.web3.PublicKey) {
   if (authority === undefined) {
@@ -16,7 +16,7 @@ async function createMint(provider: anchor.Provider, authority?: anchor.web3.Pub
     authority,
     null,
     6,
-    Client.utils.TOKEN_PROGRAM_ID,
+    spl.TOKEN_PROGRAM_ID,
   );
   return mint;
 }
@@ -29,7 +29,7 @@ describe('locker', () => {
   const creator = provider.wallet.publicKey;
   const unlockDate = new anchor.BN(Date.now() / 1000 + 4);
   const newOwner = anchor.web3.Keypair.generate();
-  const client = new Client.Client(provider, Client.TOKEN_LOCKER, Client.LOCALNET);
+  const client = new Client(provider, Client.TOKEN_LOCKER, Client.LOCALNET);
 
   let
     mint: spl.Token,
@@ -48,16 +48,22 @@ describe('locker', () => {
     await client.createLocker({
       unlockDate,
       amount: new anchor.BN(10000),
-      creator,
+      creator: creator,
       owner: creator,
       fundingWalletAuthority: creator,
-      fundingWallet,
+      fundingWallet: fundingWallet,
     });
 
     const lockers = await program.account.locker.all();
 
     const lockerAccount = lockers[0];
     console.log('Locker: ', lockerAccount);
+
+    console.log("locker amount: ", lockerAccount.account.depositedAmount.toNumber());
+    console.log("locker owner: ", lockerAccount.account.owner);
+    console.log("locker creator: ", lockerAccount.account.creator);
+    console.log("args creator: ", creator);
+    console.log("funding wallet: ", fundingWallet);
 
     assert.ok(lockerAccount.account.owner.equals(creator));
     assert.ok(lockerAccount.account.creator.equals(creator));
@@ -159,7 +165,7 @@ describe('locker', () => {
     });
 
     lockers = await client.getLockersOwnedBy(newOwner.publicKey);
-    const newLocker = lockers[0];
+    const newLocker = lockers[1];
 
     assert.ok(newLocker.account.depositedAmount.eq(amount));
 
@@ -212,43 +218,4 @@ describe('locker', () => {
       }
     );
   });
-
-  it('Creates locker with linear emission', async () => {
-    await mint.mintTo(fundingWallet, provider.wallet.publicKey, [], 1000);
-
-    const now = new anchor.BN(Date.now()).divn(1000);
-    const unlockDate = now.addn(20);
-
-    const locker = await client.createLocker({
-      unlockDate,
-      amount: new anchor.BN(1000),
-      creator,
-      owner: creator,
-      fundingWalletAuthority: creator,
-      fundingWallet,
-    });
-
-    await Client.utils.sleep(5000);
-
-    let lockerAccount = await program.account.locker.fetch(locker);
-
-    await client.withdrawFunds({
-      amount: new anchor.BN(900), // some number, it will not play any role at all
-      locker: {
-        publicKey: locker,
-        account: lockerAccount,
-      },
-      targetWallet: fundingWallet,
-      createAssociated: false,
-    });
-
-    const fundingWalletAccount = await serumCmn.getTokenAccount(provider, fundingWallet);
-    // should be 250 but it's hard to guarantee the exact value
-    assert.ok(fundingWalletAccount.amount.gten(245) && fundingWalletAccount.amount.lten(255));
-
-    lockerAccount = await program.account.locker.fetch(locker);
-    const vaultWallet = await serumCmn.getTokenAccount(provider, lockerAccount.vault);
-    // should be 750 but it's hard to guarantree the exact value
-    assert.ok(vaultWallet.amount.gten(745) && fundingWalletAccount.amount.lten(755));
-  })
 });
