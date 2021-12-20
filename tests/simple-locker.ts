@@ -71,9 +71,8 @@ describe('locker', () => {
     assert.ok(lockerAccount.account.originalUnlockDate.eq(unlockDate));
 
     const fundingWalletAccount = await serumCmn.getTokenAccount(provider, fundingWallet);
+    console.log(fundingWalletAccount.amount.toNumber());
     assert.ok(fundingWalletAccount.amount.eqn(1000));
-
-    assert.ok(await client.isMintWhitelisted(mint.publicKey));
 
     const vaultAccount = await serumCmn.getTokenAccount(provider, lockerAccount.account.vault);
     assert.ok(vaultAccount.amount.eqn(10000));
@@ -83,14 +82,14 @@ describe('locker', () => {
     const lockers = await program.account.locker.all();
     const lockerAccount = lockers[0];
 
-    assert.rejects(
+    await assert.rejects(
       async () => await client.withdrawFunds({
         amount: new anchor.BN(100),
         locker: lockerAccount,
         targetWallet: fundingWallet,
       }),
       (err) => {
-        assert.equal(err.code, 307);
+        assert.equal(err.code, 6007);
         return true;
       }
     )
@@ -158,18 +157,17 @@ describe('locker', () => {
 
     const amount = new anchor.BN(1000);
 
-    await client.splitLocker({
+    const [newLocker, _newVault] = await client.splitLocker({
       amount,
       locker,
       newOwner: newOwner.publicKey,
     });
 
-    lockers = await client.getLockersOwnedBy(newOwner.publicKey);
-    const newLocker = lockers[1];
-
-    assert.ok(newLocker.account.depositedAmount.eq(amount));
+    const newLockerAccount = await client.program.account.locker.fetch(newLocker);
+    assert.ok(newLockerAccount.depositedAmount.eq(amount));
 
     const oldVaultAccount = await serumCmn.getTokenAccount(provider, locker.account.vault);
+    console.log(oldVaultAccount.amount.toNumber());
     assert.ok(oldVaultAccount.amount.eqn(10000));
   });
 
@@ -189,8 +187,8 @@ describe('locker', () => {
         });
         break;
       } catch (err) {
-        assert.equal(err.code, 308); // TooEarlyToWithdraw
-        await Client.utils.sleep(1000);
+        assert.equal(err.code, 6007); // TooEarlyToWithdraw
+        await serumCmn.sleep(1000);
       }
     }
 
