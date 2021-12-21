@@ -207,7 +207,7 @@ class Client {
           vault: args.locker.account.vault,
           fundingWallet: args.fundingWallet,
           fundingWalletAuthority: args.fundingWalletAuthority,
-          
+
           tokenProgram: utils.TOKEN_PROGRAM_ID,
         },
       }
@@ -232,7 +232,7 @@ class Client {
         this.provider, vaultWalletAccount.mint, targetWallet
       );
       targetWallet = targetTokenWallet;
-      extraInstructions.concat(createAssociatedTokenAccountInstrs);
+      extraInstructions = extraInstructions.concat(createAssociatedTokenAccountInstrs);
     }
 
     await this.program.rpc.withdrawFunds(
@@ -332,7 +332,7 @@ class Client {
       }
     );
 
-    return newVault.publicKey;
+    return [newLocker.publicKey, newVault.publicKey];
   }
 }
 

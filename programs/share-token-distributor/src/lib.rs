@@ -64,7 +64,8 @@ pub mod share_token_distributor {
     pub fn exchange(ctx: Context<Exchange>, amount: u64) -> Result<()> {
         let mut target_wallet: Account<TokenAccount> =
             Account::try_from(&ctx.accounts.target_wallet)?;
-        require!(target_wallet.mint == ctx.accounts.vault.mint, InvalidMint);
+        let vault: Account<TokenAccount> = Account::try_from(&ctx.accounts.vault)?;
+        require!(target_wallet.mint == vault.mint, InvalidMint);
 
         ctx.accounts.locker.key().log();
         ctx.accounts.locker_authority.key().log();
@@ -85,6 +86,7 @@ pub mod share_token_distributor {
         let cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.locker_program.to_account_info(),
             simple_locker::cpi::accounts::WithdrawFunds {
+                clock: ctx.accounts.clock.to_account_info(),
                 locker: ctx.accounts.locker.to_account_info(),
                 owner: ctx.accounts.locker_authority.to_account_info(),
                 vault_authority: ctx.accounts.vault_authority.to_account_info(),
@@ -259,15 +261,17 @@ pub struct Exchange<'info> {
     vault_authority: AccountInfo<'info>,
     #[account(
         mut,
-        constraint = vault.owner == vault_authority.key()
+        // constraint = vault.owner == vault_authority.key()
     )]
-    vault: Account<'info, TokenAccount>,
+    vault: AccountInfo<'info>,
     #[account(mut)]
     // Strange, but it causes access violation exception
     // so we need to check the account manually.
     // target_wallet: Account<'info, TokenAccount>,
     target_wallet: AccountInfo<'info>,
 
+    // This causes access violation exception too.
+    clock: AccountInfo<'info>,
     token_program: Program<'info, Token>,
     locker_program: Program<'info, simple_locker::program::SimpleLocker>,
 }

@@ -110,9 +110,11 @@ pub mod simple_locker {
     pub fn withdraw_funds(ctx: Context<WithdrawFunds>, amount: u64) -> Result<()> {
         let locker = &ctx.accounts.locker;
         let vault = &mut ctx.accounts.vault;
+        let now = ctx.accounts.clock.unix_timestamp;
 
         require!(amount > 0, InvalidAmount);
         require!(amount <= vault.amount, InvalidAmount);
+        require!(now > locker.current_unlock_date, TooEarlyToWithdraw);
 
         let locker_key = locker.key();
         let seeds = &[locker_key.as_ref(), &[locker.vault_bump]];
@@ -323,6 +325,7 @@ pub struct WithdrawFunds<'info> {
     )]
     target_wallet: Account<'info, TokenAccount>,
 
+    clock: Sysvar<'info, Clock>,
     token_program: Program<'info, Token>,
 }
 

@@ -156,26 +156,38 @@ describe('share-token-distributor', () => {
       account: lockerAccount
     });
 
-    await program.rpc.exchange(
-      new anchor.BN(100),
-      {
-        accounts: {
-          shareholder: program.provider.wallet.publicKey,
-          distributor: distributor.publicKey,
-          shareTokenMint,
-          mintAuthority,
-          shareWallet,
-          shareWalletAuthority: program.provider.wallet.publicKey,
-          locker: distributorAccount.locker,
-          lockerAuthority,
-          vault: lockerAccount.vault,
-          vaultAuthority,
-          targetWallet: fundingWallet,
-          tokenProgram: TokenInstructions.TOKEN_PROGRAM_ID,
-          lockerProgram: lockerClient.programId,
-        }
+    while (true) {
+      try {
+        await program.rpc.exchange(
+          new anchor.BN(100),
+          {
+            accounts: {
+              shareholder: program.provider.wallet.publicKey,
+              distributor: distributor.publicKey,
+              shareTokenMint,
+              mintAuthority,
+              shareWallet,
+              shareWalletAuthority: program.provider.wallet.publicKey,
+              locker: distributorAccount.locker,
+              lockerAuthority,
+              vault: lockerAccount.vault,
+              vaultAuthority,
+              targetWallet: fundingWallet,
+              tokenProgram: TokenInstructions.TOKEN_PROGRAM_ID,
+              lockerProgram: lockerClient.programId,
+              clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
+            }
+          }
+        );
+        break;
+      } catch (err) {
+        const errors = err.logs.filter((s: string) =>
+          s == 'Program log: Custom program error: 0x1777' // ToEarlyToWithdraw
+          || s == 'Program log: Instruction: WithdrawFunds');
+        assert.equal(errors.length, 2);
+        await serumCmn.sleep(500);
       }
-    );
+    }
 
     const shareWalletAccount = await serumCmn.getTokenAccount(program.provider, shareWallet);
     assert.ok(shareWalletAccount.amount.eqn(0));
